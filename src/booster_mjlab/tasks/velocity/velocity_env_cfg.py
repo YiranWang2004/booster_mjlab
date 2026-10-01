@@ -36,6 +36,10 @@ from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
+# Set False before launching training to keep stage 4 as the final velocity range.
+# Shared by K1 / K1-Parallel, with and without AMP.
+ENABLE_FIFTH_VELOCITY_STAGE = True
+
 VELOCITY_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     size=(8.0, 8.0),
     border_width=20.0,
@@ -511,6 +515,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             },
         ),
     }
+
+    if ENABLE_FIFTH_VELOCITY_STAGE:
+        # Iteration 20,000 with the default 24 environment steps per PPO iteration.
+        curriculum["command_vel"].params["velocity_stages"].append(
+            {
+                "step": 20000 * 24,
+                "lin_vel_x": (-1.75, 2.0),
+                "lin_vel_y": (-2.0, 2.0),
+                "ang_vel_z": (-2.0, 2.0),
+            }
+        )
 
     return ManagerBasedRlEnvCfg(
         scene=SceneCfg(
