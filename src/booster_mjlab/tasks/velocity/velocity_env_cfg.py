@@ -38,7 +38,7 @@ from mjlab.viewer import ViewerConfig
 
 # Set False before launching training to keep stage 4 as the final velocity range.
 # Shared by K1 / K1-Parallel, with and without AMP.
-ENABLE_FIFTH_VELOCITY_STAGE = True
+ENABLE_FIFTH_VELOCITY_STAGE = False
 
 VELOCITY_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     size=(8.0, 8.0),

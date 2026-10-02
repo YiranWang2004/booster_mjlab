@@ -31,9 +31,28 @@ The last command syncs the environment and prints every registered task.
 Train a Booster K1 to follow velocity commands on flat terrain. The reward has been tuned to work together with AMP reference motions.
 The default [motion dataset](https://huggingface.co/datasets/whirlwind-ams/lafan_locomotion_k1) contains a few locomotion clips retargeted from [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset).
 
+For a textbook-style explanation of the AMP discriminator, its mathematical derivations,
+and the implementation, see [AMP 判别器：原理、公式与代码（中文）](docs/AMP_DISCRIMINATOR_TEXTBOOK.zh-CN.md).
+
 ```bash
 uv run train Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1 --env.scene.num-envs 4096
 ```
+
+For synchronous training on two GPUs (also supported by the Adam AMP variants):
+
+```bash
+uv run train Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1 \
+  --gpu-ids '[0, 1]' --env.scene.num-envs 2048 \
+  --agent.max-iterations 30000 --agent.logger tensorboard
+```
+
+`num-envs` is **per GPU**: this example runs 4096 environments in total. The launcher
+starts one worker per GPU; actor, critic and AMP discriminator gradients are averaged
+across workers, and observation normalization uses global statistics. Only rank 0
+writes training logs and checkpoints. Use `--gpu-ids '[0]'` for single-GPU training,
+or `--gpu-ids all` for all visible GPUs. GPU lists use quoted Python list syntax.
+Curriculum thresholds count environment steps per worker, so adding a GPU does not
+change the iteration at which a velocity stage starts.
 
 Evaluate a policy while training (fetches latest checkpoint from Weights & Biases):
 

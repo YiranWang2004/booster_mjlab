@@ -1,0 +1,117 @@
+--- git commit ---
+9a96755b0d20d938f94dffb033d70bf05c426efb
+
+
+--- git status ---
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   README.md
+	modified:   src/booster_mjlab/amp/algorithms/amp_ppo.py
+	modified:   src/booster_mjlab/scripts/train.py
+	modified:   src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	tests/
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/README.md b/README.md
+index c7d4f96..0ccd802 100644
+--- a/README.md
++++ b/README.md
+@@ -35,6 +35,22 @@ The default [motion dataset](https://huggingface.co/datasets/whirlwind-ams/lafan
+ uv run train Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1 --env.scene.num-envs 4096
+ ```
+ 
++For synchronous training on two GPUs (also supported by the Adam AMP variants):
++
++```bash
++uv run train Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1 \
++  --gpu-ids '[0, 1]' --env.scene.num-envs 2048 \
++  --agent.max-iterations 30000 --agent.logger tensorboard
++```
++
++`num-envs` is **per GPU**: this example runs 4096 environments in total. The launcher
++starts one worker per GPU; actor, critic and AMP discriminator gradients are averaged
++across workers, and observation normalization uses global statistics. Only rank 0
++writes training logs and checkpoints. Use `--gpu-ids '[0]'` for single-GPU training,
++or `--gpu-ids all` for all visible GPUs. GPU lists use quoted Python list syntax.
++Curriculum thresholds count environment steps per worker, so adding a GPU does not
++change the iteration at which a velocity stage starts.
++
+ Evaluate a policy while training (fetches latest checkpoint from Weights & Biases):
+ 
+ ```bash
+diff --git a/src/booster_mjlab/amp/algorithms/amp_ppo.py b/src/booster_mjlab/amp/algorithms/amp_ppo.py
+index 88273e6..0464f70 100644
+--- a/src/booster_mjlab/amp/algorithms/amp_ppo.py
++++ b/src/booster_mjlab/amp/algorithms/amp_ppo.py
+@@ -107,6 +107,33 @@ class AmpPPO(PPO):
+                 muon_ns_steps=muon_ns_steps,
+             )
+ 
++    def broadcast_parameters(self) -> None:
++        """Initialize all ranks with the same policy and AMP discriminator state."""
++        super().broadcast_parameters()
++        # Include normalizer buffers as well as trainable weights (also on resume).
++        for tensor in self.amp.discriminator.state_dict().values():
++            torch.distributed.broadcast(tensor, src=0)
++
++    def reduce_parameters(self) -> None:
++        """Average policy and discriminator gradients before either optimizer steps."""
++        super().reduce_parameters()
++        # PPO only knows about actor/critic/RND. AMP's Adam parameter groups must
++        # receive the same gradients on every rank, including with hybrid Muon.
++        grads = [
++            parameter.grad
++            for parameter in self.amp.discriminator.parameters()
++            if parameter.grad is not None
++        ]
++        if not grads:
++            return
++        flat = torch.cat([grad.reshape(-1) for grad in grads])
++        torch.distributed.all_reduce(flat, op=torch.distributed.ReduceOp.SUM)
++        flat /= self.gpu_world_size
++        offset = 0
++        for grad in grads:
++            grad.copy_(flat[offset : offset + grad.numel()].view_as(grad))
++            offset += grad.numel()
++
+     def act_amp(self, amp_obs: torch.Tensor) -> None:
+         """Initialize AMP history if collection has not started yet."""
+         self.amp.act(amp_obs)
+diff --git a/src/booster_mjlab/scripts/train.py b/src/booster_mjlab/scripts/train.py
+index 27093a7..2fc4888 100644
+--- a/src/booster_mjlab/scripts/train.py
++++ b/src/booster_mjlab/scripts/train.py
+@@ -36,6 +36,10 @@ class TrainConfig:
+     wandb_checkpoint_name: str | None = None
+     """Optional checkpoint name within the W&B run to load (e.g. 'model_4000.pt')."""
+     gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
++    """GPUs to use: '[0]' for one, '[0, 1]' for two, or all for all visible GPUs.
++
++    Quote list values in the shell. env.scene.num_envs is the number per GPU.
++    """
+ 
+     @staticmethod
+     def from_task(task_id: str) -> "TrainConfig":
+diff --git a/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py b/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
+index 3bee71b..f1c7515 100644
+--- a/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
++++ b/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
+@@ -38,7 +38,7 @@ from mjlab.viewer import ViewerConfig
+ 
+ # Set False before launching training to keep stage 4 as the final velocity range.
+ # Shared by K1 / K1-Parallel, with and without AMP.
+-ENABLE_FIFTH_VELOCITY_STAGE = True
++ENABLE_FIFTH_VELOCITY_STAGE = False
+ 
+ VELOCITY_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
+     size=(8.0, 8.0),

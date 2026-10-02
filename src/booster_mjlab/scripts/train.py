@@ -36,6 +36,10 @@ class TrainConfig:
     wandb_checkpoint_name: str | None = None
     """Optional checkpoint name within the W&B run to load (e.g. 'model_4000.pt')."""
     gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
+    """GPUs to use: '[0]' for one, '[0, 1]' for two, or all for all visible GPUs.
+
+    Quote list values in the shell. env.scene.num_envs is the number per GPU.
+    """
 
     @staticmethod
     def from_task(task_id: str) -> "TrainConfig":

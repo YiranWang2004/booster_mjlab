@@ -1,0 +1,50 @@
+--- git commit ---
+d92e11395d961096d639446c0a8a176f12bb51da
+
+
+--- git status ---
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py b/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
+index 1e22aed..3bee71b 100644
+--- a/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
++++ b/src/booster_mjlab/tasks/velocity/velocity_env_cfg.py
+@@ -36,6 +36,10 @@ from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
+ from mjlab.utils.noise import UniformNoiseCfg as Unoise
+ from mjlab.viewer import ViewerConfig
+ 
++# Set False before launching training to keep stage 4 as the final velocity range.
++# Shared by K1 / K1-Parallel, with and without AMP.
++ENABLE_FIFTH_VELOCITY_STAGE = True
++
+ VELOCITY_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
+     size=(8.0, 8.0),
+     border_width=20.0,
+@@ -512,6 +516,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
+         ),
+     }
+ 
++    if ENABLE_FIFTH_VELOCITY_STAGE:
++        # Iteration 20,000 with the default 24 environment steps per PPO iteration.
++        curriculum["command_vel"].params["velocity_stages"].append(
++            {
++                "step": 20000 * 24,
++                "lin_vel_x": (-1.75, 2.0),
++                "lin_vel_y": (-2.0, 2.0),
++                "ang_vel_z": (-2.0, 2.0),
++            }
++        )
++
+     return ManagerBasedRlEnvCfg(
+         scene=SceneCfg(
+             terrain=TerrainEntityCfg(

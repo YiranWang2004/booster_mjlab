@@ -107,6 +107,33 @@ class AmpPPO(PPO):
                 muon_ns_steps=muon_ns_steps,
             )
 
+    def broadcast_parameters(self) -> None:
+        """Initialize all ranks with the same policy and AMP discriminator state."""
+        super().broadcast_parameters()
+        # Include normalizer buffers as well as trainable weights (also on resume).
+        for tensor in self.amp.discriminator.state_dict().values():
+            torch.distributed.broadcast(tensor, src=0)
+
+    def reduce_parameters(self) -> None:
+        """Average policy and discriminator gradients before either optimizer steps."""
+        super().reduce_parameters()
+        # PPO only knows about actor/critic/RND. AMP's Adam parameter groups must
+        # receive the same gradients on every rank, including with hybrid Muon.
+        grads = [
+            parameter.grad
+            for parameter in self.amp.discriminator.parameters()
+            if parameter.grad is not None
+        ]
+        if not grads:
+            return
+        flat = torch.cat([grad.reshape(-1) for grad in grads])
+        torch.distributed.all_reduce(flat, op=torch.distributed.ReduceOp.SUM)
+        flat /= self.gpu_world_size
+        offset = 0
+        for grad in grads:
+            grad.copy_(flat[offset : offset + grad.numel()].view_as(grad))
+            offset += grad.numel()
+
     def act_amp(self, amp_obs: torch.Tensor) -> None:
         """Initialize AMP history if collection has not started yet."""
         self.amp.act(amp_obs)
