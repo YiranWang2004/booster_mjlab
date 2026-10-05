@@ -6,6 +6,10 @@ from booster_mjlab.robots.booster_k1.sensors import (
 )
 
 from booster_mjlab.robots import K1_ACTION_SCALE, get_k1_robot_cfg
+from booster_mjlab.robots.booster_k1.k1_20dof_constants import (
+    K1_20DOF_ACTION_SCALE,
+    get_k1_20dof_robot_cfg,
+)
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -17,6 +21,26 @@ from mjlab.sensor import (
 from mjlab.tasks.velocity import mdp
 
 from booster_mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
+
+
+def with_fixed_head(cfg: ManagerBasedRlEnvCfg) -> ManagerBasedRlEnvCfg:
+    """Convert a serial K1 task to 20 body joints with a rigid head."""
+    cfg.scene.entities["robot"] = get_k1_20dof_robot_cfg()
+    joint_pos_action = cfg.actions["joint_pos"]
+    assert isinstance(joint_pos_action, JointPositionActionCfg)
+    joint_pos_action.scale = K1_20DOF_ACTION_SCALE.copy()
+
+    # Name expressions must not include removed joints. Other joint terms
+    # enumerate the model's remaining joints and shrink automatically.
+    posture_params = cfg.rewards["upper_body_posture"].params
+    posture_params["asset_cfg"].joint_names = (r".*_Shoulder_.*", r".*_Elbow_.*")
+    for regime in ("std_standing", "std_walking", "std_running"):
+        posture_params[regime] = {
+            pattern: value
+            for pattern, value in posture_params[regime].items()
+            if pattern != r"Head_.*"
+        }
+    return cfg
 
 
 def booster_k1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:

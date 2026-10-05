@@ -68,6 +68,28 @@ The `-DA-` tasks train with left/right symmetry data augmentation. Drop `DA` fro
 The `-Muon-` tasks use the [Muon optimizer](https://kellerjordan.github.io/posts/muon/) (Jordan et al., 2024) for the
 actor and critic weight matrices. Drop `Muon` from the task ID for the Adam variant with otherwise identical settings.
 
+All serial K1 velocity tasks also have a `-20DoF` variant. These control the 20
+body joints, with the head rigidly fixed at yaw `0` and pitch `0` rad while
+retaining its mass and collision geometry. The actor observation has 69 values
+(instead of 75), and the critic has 84 (instead of 90); joint positions, joint
+velocities and previous actions each shrink from 22 to 20 values. AMP reference
+clips are projected onto the same body joint order for both resets and training.
+The leg-only AMP discriminator features remain unchanged.
+
+```bash
+# Velocity tracking with symmetry augmentation and Muon.
+uv run train Mjlab-Velocity-Flat-DA-Muon-Booster-K1-20DoF --env.scene.num-envs 4096
+
+# AMP velocity tracking with symmetry augmentation and Muon.
+uv run train Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1-20DoF --env.scene.num-envs 4096
+```
+
+Use the same task IDs with `uv run play` for evaluation. The original 22-joint
+tasks remain available. The 20DoF variants use separate experiment directories
+ending in `_20dof` and require newly trained policies because the network input
+and output dimensions differ from the 22-joint checkpoints. Parallel-ankle tasks
+do not have a 20DoF variant.
+
 ### 2. Motion Imitation
 
 Train a Booster K1 to track motion capture clips on flat terrain. Motions are managed as WandB artifacts;

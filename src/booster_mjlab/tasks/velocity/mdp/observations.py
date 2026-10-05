@@ -9,6 +9,8 @@ import torch
 
 K1_JOINT_DIM = 22
 K1_ACTION_DIM = 22
+K1_BODY_JOINT_DIM = 20
+SUPPORTED_JOINT_DIMS = (K1_BODY_JOINT_DIM, K1_JOINT_DIM)
 
 # Joint slots whose axes change sign under a left/right mirror.
 K1_INVERTED_JOINT_INDICES: tuple[int, ...] = (
@@ -31,6 +33,7 @@ K1_PARALLEL_INVERTED_JOINT_INDICES: tuple[int, ...] = tuple(
     index for index in K1_INVERTED_JOINT_INDICES if index not in (15, 21)
 )
 POLICY_DIM_NO_BASE_LIN_VEL = 75
+POLICY_DIM_20DOF = 69
 CRITIC_EXTRA_DIM = 15
 
 
@@ -80,9 +83,10 @@ def _augment_symmetries(
         )
 
     if actions is not None:
-        if actions.shape[1] != K1_ACTION_DIM:
+        if actions.shape[1] not in SUPPORTED_JOINT_DIMS:
             raise ValueError(
-                f"Unsupported action dim: {actions.shape[1]}. Expected {K1_ACTION_DIM}."
+                f"Unsupported action dim: {actions.shape[1]}. "
+                f"Expected one of {SUPPORTED_JOINT_DIMS}."
             )
 
         n_envs = actions.shape[0]
@@ -158,9 +162,10 @@ def flip_k1_policy_obs_left_right(
     ] * obs.new_tensor([1.0, -1.0, 1.0])
 
     joint_pos_start = base_offset + 6
-    joint_vel_start = joint_pos_start + K1_JOINT_DIM
-    last_actions_start = joint_vel_start + K1_JOINT_DIM
-    command_start = last_actions_start + K1_ACTION_DIM
+    joint_dim = (policy_dim - 9) // 3
+    joint_vel_start = joint_pos_start + joint_dim
+    last_actions_start = joint_vel_start + joint_dim
+    command_start = last_actions_start + joint_dim
 
     # joint pos
     obs[:, joint_pos_start:joint_vel_start] = _switch_k1_joints_left_right(
@@ -249,7 +254,7 @@ def flip_k1_critic_obs_left_right(
     return obs
 
 
-SUPPORTED_POLICY_DIMS = (POLICY_DIM_NO_BASE_LIN_VEL,)
+SUPPORTED_POLICY_DIMS = (POLICY_DIM_20DOF, POLICY_DIM_NO_BASE_LIN_VEL)
 
 
 def _is_supported_policy_dim(policy_dim: int) -> bool:
@@ -260,10 +265,10 @@ def _get_num_linear_obs_blocks(policy_dim: int) -> int | None:
     """Infer number of leading 3D base linear vectors from policy dim.
 
     Layout is:
-    [base_ang_vel(3), projected_gravity(3), joint_pos(22), joint_vel(22),
-     last_action(22), command(3)]
+    [base_ang_vel(3), projected_gravity(3), joint_pos(J), joint_vel(J),
+     last_action(J), command(3)], with J=22 or J=20 (fixed head).
     """
-    if policy_dim != POLICY_DIM_NO_BASE_LIN_VEL:
+    if policy_dim not in SUPPORTED_POLICY_DIMS:
         return None
     return 0
 
@@ -285,22 +290,33 @@ def _switch_k1_joints_left_right(
     Joints marked as "Inverted" need to have their sign flipped when calculating the left-right symmetry.
 
     Args:
-        joint_tensor (torch.Tensor): The joint tensor of shape (..., 22).
+        joints: Shape (batch, 22), or (batch, 20) with the head slots removed.
     """
-    if joints.shape[1] != K1_JOINT_DIM:
+    joint_dim = joints.shape[1]
+    if joint_dim not in SUPPORTED_JOINT_DIMS:
         raise ValueError(
-            f"Unsupported joint tensor dim: {joints.shape[1]}. Expected {K1_JOINT_DIM}."
+            f"Unsupported joint tensor dim: {joint_dim}. "
+            f"Expected one of {SUPPORTED_JOINT_DIMS}."
         )
     joints_flipped = torch.zeros_like(joints)
 
-    # Head joints
-    joints_flipped[:, :2] = joints[:, :2]
+    head_dim = joint_dim - K1_BODY_JOINT_DIM
+    # Head joints (absent in the 20DoF variants).
+    joints_flipped[:, :head_dim] = joints[:, :head_dim]
     # Shoulders and Elbows
-    joints_flipped[:, 2:6] = joints[:, 6:10]
-    joints_flipped[:, 6:10] = joints[:, 2:6]
+    joints_flipped[:, head_dim : head_dim + 4] = joints[:, head_dim + 4 : head_dim + 8]
+    joints_flipped[:, head_dim + 4 : head_dim + 8] = joints[:, head_dim : head_dim + 4]
     # Hips, Knees, Ankles
-    joints_flipped[:, 10:16] = joints[:, 16:22]
-    joints_flipped[:, 16:22] = joints[:, 10:16]
+    joints_flipped[:, head_dim + 8 : head_dim + 14] = joints[
+        :, head_dim + 14 : head_dim + 20
+    ]
+    joints_flipped[:, head_dim + 14 : head_dim + 20] = joints[
+        :, head_dim + 8 : head_dim + 14
+    ]
+
+    # Sign indices are expressed in the original 22-joint layout.
+    if head_dim == 0:
+        inverted_indices = tuple(index - 2 for index in inverted_indices if index >= 2)
 
     joints_flipped[:, list(inverted_indices)] = -joints_flipped[
         :, list(inverted_indices)
